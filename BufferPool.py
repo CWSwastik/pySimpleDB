@@ -275,6 +275,8 @@ class BufferMgr:
     # takes block; returns buffer
     def pin(self, target_block):
         db_logger.info('Pinning ' + str(target_block))
+        if hasattr(self.fm, 'block_accesses'):
+            self.fm.block_accesses += 1
         with self._condition:
             b = self.tryToPin(target_block)
             start = time.time()

@@ -142,8 +142,19 @@ class FileMgr:
         self.block_size = block_size
         self._lock = threading.Lock()
 
+        self.read_count = 0
+        self.write_count = 0
+        self.block_accesses = 0
+
+    def reset_counters(self):
+        with self._lock:
+            self.read_count = 0
+            self.write_count = 0
+            self.block_accesses = 0
+
     def readBlockToPage(self, block, page):
         with self._lock:
+            self.read_count += 1
             f = self.getFileHandle(block.file_name)
             f.seek(self.block_size * block.block_number)
             # Making sure we are only reading the block size of the file
@@ -162,6 +173,7 @@ class FileMgr:
     # if file does not exist we create a new one
     def writePageToBlock(self, block, page):
         with self._lock:
+            self.write_count += 1
             db_logger.info('Disk write of ' + str(block))
             f = self.getFileHandle(block.file_name)  # r is used because a prevents seek and w truncates the file
             f.seek(self.block_size * block.block_number)
@@ -170,6 +182,7 @@ class FileMgr:
     # Append a new block to the provided (log) file and return the block reference
     def appendEmptyBlock(self, fileName): # TODO: if we are adding removeBlock(to pair to logging block removal) then it makes sense to rename this to appendBlock
         with self._lock:
+            self.write_count += 1
             f = self.getFileHandle(fileName)
             new_block_number = self.length(fileName)
             f.seek(self.block_size * new_block_number)

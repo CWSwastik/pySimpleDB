@@ -2,8 +2,30 @@ import os
 import shutil
 import time
 import random
+import argparse
 
 def main():
+    parser = argparse.ArgumentParser(
+        description='pySimpleDB Benchmark — Query Optimization & Indexing',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument('--query', type=str, default='all',
+                        choices=['Q1', 'Q2', 'Q3', 'all'],
+                        help='Which query to run (default: all)')
+    parser.add_argument('--mode', type=str, default='baseline',
+                        choices=['baseline', 'opt', 'index', 'full'],
+                        help=(
+                            'Execution mode:\n'
+                            '  baseline — No optimization, no indexes (default)\n'
+                            '  opt      — Join reordering + selection pushdown, no indexes\n'
+                            '  index    — Indexes only, original join order\n'
+                            '  full     — Both optimization and indexes'
+                        ))
+    args = parser.parse_args()
+
+    # =========================================================================
+    # Database Setup
+    # =========================================================================
     db_dir = os.path.join(os.getcwd(), 'benchmarkdb')
     if os.path.exists(db_dir):
         print(f"Removing existing database directory: {db_dir}")
@@ -36,6 +58,9 @@ def main():
     db = BenchmarkDB('benchmarkdb', 8192, 1000)
     tx = Transaction(db.fm, db.lm, db.bm)
 
+    # =========================================================================
+    # Schema Creation
+    # =========================================================================
     print("Creating schemas...")
     sStudent = Schema(['s_id', 'int', 4], ['s_name', 'str', 50], ['s_department', 'str', 30], ['s_year', 'int', 4])
     db.mm.createTable(tx, 'Student', sStudent)
@@ -52,6 +77,9 @@ def main():
     sEnrollment = Schema(['e_id', 'int', 4], ['e_student_id', 'int', 4], ['e_section_id', 'int', 4], ['e_grade', 'str', 2])
     db.mm.createTable(tx, 'Enrollment', sEnrollment)
 
+    # =========================================================================
+    # Data Population
+    # =========================================================================
     random.seed(42)
 
     departments = ['CS', 'EE', 'ME', 'Math', 'Physics', 'Biology', 'Chemistry', 'English', 'History']
@@ -60,9 +88,9 @@ def main():
 
     print("Populating database...")
     
-    print("Inserting Students (20)...")
+    print("Inserting Students (40)...")
     ts_student = TableScan(tx, 'Student', db.mm.getLayout(tx, 'Student'))
-    for i in range(1, 21):
+    for i in range(1, 41):
         ts_student.nextEmptyRecord()
         ts_student.setInt('s_id', i)
         ts_student.setString('s_name', f"Student_{i}")
@@ -70,73 +98,129 @@ def main():
         ts_student.setInt('s_year', random.randint(2018, 2024))
     ts_student.closeRecordPage()
 
-    print("Inserting Instructors (10)...")
+    print("Inserting Instructors (20)...")
     ts_instructor = TableScan(tx, 'Instructor', db.mm.getLayout(tx, 'Instructor'))
-    for i in range(1, 11):
+    for i in range(1, 21):
         ts_instructor.nextEmptyRecord()
         ts_instructor.setInt('i_id', i)
         ts_instructor.setString('i_name', f"Instructor_{i}")
         ts_instructor.setString('i_department', random.choice(departments))
     ts_instructor.closeRecordPage()
 
-    print("Inserting Courses (5)...")
+    print("Inserting Courses (10)...")
     ts_course = TableScan(tx, 'Course', db.mm.getLayout(tx, 'Course'))
-    for i in range(1, 6):
+    for i in range(1, 11):
         ts_course.nextEmptyRecord()
         ts_course.setInt('c_id', i)
         ts_course.setString('c_title', f"Course_{i}")
-        ts_course.setString('c_department', random.choice(departments))
+        # Force Course 1 to be 'CS', others are not 'CS'
+        dept = 'CS' if i == 1 else random.choice([d for d in departments if d != 'CS'])
+        ts_course.setString('c_department', dept)
         ts_course.setInt('c_credits', random.choice([3, 4]))
     ts_course.closeRecordPage()
 
-    print("Inserting Sections (50)...")
+    print("Inserting Sections (100)...")
     ts_section = TableScan(tx, 'Section', db.mm.getLayout(tx, 'Section'))
-    for i in range(1, 51):
+    for i in range(1, 101):
         ts_section.nextEmptyRecord()
         ts_section.setInt('sec_id', i)
-        ts_section.setInt('sec_course_id', random.randint(1, 5))
-        ts_section.setInt('sec_instructor_id', random.randint(1, 10))
+        if random.random() < 0.05:
+            course_id = 1
+        else:
+            course_id = random.randint(2, 10)
+        ts_section.setInt('sec_course_id', course_id)
+        ts_section.setInt('sec_instructor_id', random.randint(1, 20))
         ts_section.setString('sec_semester', random.choice(semesters))
         ts_section.setInt('sec_year', random.choice([2023, 2024]))
     ts_section.closeRecordPage()
 
-    print("Inserting Enrollments (100)...")
+    print("Inserting Enrollments (200)...")
     ts_enrollment = TableScan(tx, 'Enrollment', db.mm.getLayout(tx, 'Enrollment'))
-    for i in range(1, 101):
+    for i in range(1, 201):
         ts_enrollment.nextEmptyRecord()
         ts_enrollment.setInt('e_id', i)
-        ts_enrollment.setInt('e_student_id', random.randint(1, 20))
-        ts_enrollment.setInt('e_section_id', random.randint(1, 50))
+        ts_enrollment.setInt('e_student_id', random.randint(1, 40))
+        ts_enrollment.setInt('e_section_id', random.randint(1, 100))
         ts_enrollment.setString('e_grade', random.choice(grades))
     ts_enrollment.closeRecordPage()
 
     tx.commit()
     print("Database populated successfully!\n")
 
-    """
-    Q1. Students enrolled in CS courses (Slow join)
-    Q2. Courses with high enrollment
-    Q3. Students who received an NC grade
-    Q4. Instructor teaching load per semester
-    Q5. Filter by s_department
-    """
+    # =========================================================================
+    # Index Creation (for 'index' and 'full' modes)
+    # =========================================================================
+    indexes = None
+    if args.mode in ('index', 'full'):
+        print("Building indexes...")
+        from solution import create_indexes
+        tx_idx = Transaction(db.fm, db.lm, db.bm)
+        indexes = create_indexes(db, tx_idx)
+        tx_idx.commit()
+        print("Indexes built successfully!\n")
+
+    # =========================================================================
+    # Planner Setup
+    # =========================================================================
     tx2 = Transaction(db.fm, db.lm, db.bm)
-    qp = BasicQueryPlanner(db.mm)
     up = BasicUpdatePlanner(db.mm)
+
+    if args.mode == 'baseline':
+        qp = BasicQueryPlanner(db.mm)
+    elif args.mode == 'opt':
+        from solution import BetterQueryPlanner
+        qp = BetterQueryPlanner(db.mm)
+    elif args.mode == 'index':
+        from solution import IndexQueryPlanner
+        qp = IndexQueryPlanner(db.mm, indexes)
+    elif args.mode == 'full':
+        from solution import BetterQueryPlanner, IndexQueryPlanner
+        # Full mode: optimized planner wrapped with index support
+        # IndexQueryPlanner uses both optimization and indexes
+        qp = IndexQueryPlanner(db.mm, indexes)
+
     p = Planner(qp, up)
 
-    queries = [
+    # =========================================================================
+    # Query Definitions
+    # =========================================================================
+    all_queries = [
         ("Q1", "select s_id, s_name from Student, Enrollment, Section, Course where s_id = e_student_id and e_section_id = sec_id and sec_course_id = c_id and c_department = 'CS'"),
-        ("Q2", "select c_id, c_title from Course, Section, Enrollment where c_id = sec_course_id and sec_id = e_section_id and c_id = 50"),
-        ("Q3", "select s_id, s_name from Student, Enrollment where s_id = e_student_id and e_grade = 'NC'"),
-        ("Q4", "select i_id, i_name from Instructor, Section where i_id = sec_instructor_id and sec_semester = 'Fall' and sec_year = 2024"),
-        ("Q5", "select s_department, e_grade from Student, Enrollment where s_id = e_student_id and s_department = 'CS'")
+        ("Q2", "select s_id, s_name from Student, Enrollment where s_id = e_student_id and e_grade = 'NC'"),
+        ("Q3", "select i_id, i_name from Instructor, Section where i_id = sec_instructor_id and sec_semester = 'Fall' and sec_year = 2024"),
     ]
 
-    print("=================== Executing Benchmark Queries ===================")
+    if args.query == 'all':
+        queries = all_queries
+    else:
+        queries = [q for q in all_queries if q[0] == args.query]
+
+    # =========================================================================
+    # Query Execution
+    # =========================================================================
+    mode_descriptions = {
+        'baseline': 'Baseline (no optimization, no indexes)',
+        'opt':      'Optimized (join reordering + selection pushdown)',
+        'index':    'Indexed (B-tree indexes, original join order)',
+        'full':     'Full (optimization + indexes)',
+    }
+
+    print("=" * 70)
+    print(f"  MODE: {mode_descriptions[args.mode]}")
+    print(f"  QUERIES: {args.query}")
+    print("=" * 70)
+
+    results = []
+
     for name, q in queries:
-        print(f"\nExecuting {name}...")
-        print(f"Query: {q}")
+        print(f"\n{'-' * 60}")
+        print(f"  {name} | Mode: {args.mode}")
+        print(f"  Query: {q}")
+        print(f"{'-' * 60}")
+
+        # Reset I/O counters before each query
+        db.fm.reset_counters()
+
         start_time = time.time()
         
         try:
@@ -148,13 +232,44 @@ def main():
             scan.closeRecordPage()
             
             end_time = time.time()
-            print(f"--> {name} Results: found {count} rows in {end_time - start_time:.4f} seconds")
+            elapsed = end_time - start_time
+            block_accesses = db.fm.block_accesses
+
+            print(f"  [OK] Rows returned   : {count}")
+            print(f"  [OK] Time            : {elapsed:.4f} seconds")
+            print(f"  [OK] Block accesses  : {block_accesses}")
+
+
+            results.append({
+                'query': name, 'mode': args.mode,
+                'rows': count, 'time': elapsed,
+                'accesses': block_accesses,
+            })
+
+        except NotImplementedError as e:
+            end_time = time.time()
+            print(f"  [!!] NOT IMPLEMENTED: {e}")
+            print(f"  (Time before error: {end_time - start_time:.4f}s)")
         except Exception as e:
             end_time = time.time()
-            print(f"--> {name} Failed with error: {e}")
-            print(f"Time elapsed before error: {end_time - start_time:.4f} seconds")
+            print(f"  [!!] FAILED: {e}")
+            print(f"  (Time before error: {end_time - start_time:.4f}s)")
             
     tx2.commit()
+
+    # =========================================================================
+    # Summary Table
+    # =========================================================================
+    if results:
+        print(f"\n{'=' * 70}")
+        print(f"  SUMMARY — Mode: {args.mode}")
+        print(f"{'=' * 70}")
+        print(f"  {'Query':<8} {'Rows':<8} {'Time (s)':<12} {'Accesses':<12}")
+        print(f"  {'-' * 60}")
+        for r in results:
+            print(f"  {r['query']:<8} {r['rows']:<8} {r['time']:<12.4f} {r['accesses']:<12}")
+        print()
+
 
 if __name__ == "__main__":
     main()
