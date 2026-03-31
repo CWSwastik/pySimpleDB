@@ -88,59 +88,55 @@ def main():
 
     print("Populating database...")
     
-    print("Inserting Students (40)...")
+    print("Inserting Students (100)...")
     ts_student = TableScan(tx, 'Student', db.mm.getLayout(tx, 'Student'))
-    for i in range(1, 41):
+    for i in range(1, 101):
         ts_student.nextEmptyRecord()
         ts_student.setInt('s_id', i)
         ts_student.setString('s_name', f"Student_{i}")
         ts_student.setString('s_department', random.choice(departments))
-        ts_student.setInt('s_year', random.randint(2018, 2024))
+        ts_student.setInt('s_year', random.randint(2021, 2025))
     ts_student.closeRecordPage()
 
-    print("Inserting Instructors (20)...")
+    print("Inserting Instructors (50)...")
     ts_instructor = TableScan(tx, 'Instructor', db.mm.getLayout(tx, 'Instructor'))
-    for i in range(1, 21):
+    for i in range(1, 51):
         ts_instructor.nextEmptyRecord()
         ts_instructor.setInt('i_id', i)
         ts_instructor.setString('i_name', f"Instructor_{i}")
         ts_instructor.setString('i_department', random.choice(departments))
     ts_instructor.closeRecordPage()
 
-    print("Inserting Courses (10)...")
+    print("Inserting Courses (20)...")
     ts_course = TableScan(tx, 'Course', db.mm.getLayout(tx, 'Course'))
-    for i in range(1, 11):
+    for i in range(1, 21):
         ts_course.nextEmptyRecord()
         ts_course.setInt('c_id', i)
         ts_course.setString('c_title', f"Course_{i}")
-        # Force Course 1 to be 'CS', others are not 'CS'
-        dept = 'CS' if i == 1 else random.choice([d for d in departments if d != 'CS'])
+        dept = random.choice([d for d in departments])
         ts_course.setString('c_department', dept)
         ts_course.setInt('c_credits', random.choice([3, 4]))
     ts_course.closeRecordPage()
 
-    print("Inserting Sections (100)...")
+    print("Inserting Sections (300)...")
     ts_section = TableScan(tx, 'Section', db.mm.getLayout(tx, 'Section'))
-    for i in range(1, 101):
+    for i in range(1, 301):
         ts_section.nextEmptyRecord()
         ts_section.setInt('sec_id', i)
-        if random.random() < 0.05:
-            course_id = 1
-        else:
-            course_id = random.randint(2, 10)
+        course_id = random.randint(1, 20)
         ts_section.setInt('sec_course_id', course_id)
-        ts_section.setInt('sec_instructor_id', random.randint(1, 20))
+        ts_section.setInt('sec_instructor_id', random.randint(1, 50))
         ts_section.setString('sec_semester', random.choice(semesters))
-        ts_section.setInt('sec_year', random.choice([2023, 2024]))
+        ts_section.setInt('sec_year', random.randint(2021,2025))
     ts_section.closeRecordPage()
 
-    print("Inserting Enrollments (200)...")
+    print("Inserting Enrollments (500)...")
     ts_enrollment = TableScan(tx, 'Enrollment', db.mm.getLayout(tx, 'Enrollment'))
-    for i in range(1, 201):
+    for i in range(1, 501):
         ts_enrollment.nextEmptyRecord()
         ts_enrollment.setInt('e_id', i)
-        ts_enrollment.setInt('e_student_id', random.randint(1, 40))
-        ts_enrollment.setInt('e_section_id', random.randint(1, 100))
+        ts_enrollment.setInt('e_student_id', random.randint(1, 100))
+        ts_enrollment.setInt('e_section_id', random.randint(1, 300))
         ts_enrollment.setString('e_grade', random.choice(grades))
     ts_enrollment.closeRecordPage()
 
@@ -177,7 +173,8 @@ def main():
         from solution import BetterQueryPlanner, IndexQueryPlanner
         # Full mode: optimized planner wrapped with index support
         # IndexQueryPlanner uses both optimization and indexes
-        qp = IndexQueryPlanner(db.mm, indexes)
+        better = BetterQueryPlanner(db.mm)
+        qp = IndexQueryPlanner(db.mm, indexes, better_planner = better)
 
     p = Planner(qp, up)
 

@@ -281,8 +281,12 @@ class TableScan:
 
     # RecordID
     def moveToRecordID(self, rid : RecordID):
-        self.moveToBlock(rid.blk_num)
-        self.current_slot_index = rid.slot_num
+        # Check if we are already on the correct block to prevent Buffer thrashing!
+        if self.rp is not None and self.rp.blk.block_number == rid.blk_num:
+            self.current_slot_index = rid.slot_num
+        else:
+            self.moveToBlock(rid.blk_num)
+            self.current_slot_index = rid.slot_num
 
 
     # operate on the current_slot_index
